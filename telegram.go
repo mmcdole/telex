@@ -16,12 +16,14 @@ import (
 	"github.com/gotd/td/session"
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/auth"
+	"github.com/gotd/td/telegram/auth/qrlogin"
 	"github.com/gotd/td/telegram/message"
 	"github.com/gotd/td/telegram/peers"
 	"github.com/gotd/td/telegram/updates"
 	updhook "github.com/gotd/td/telegram/updates/hook"
 	"github.com/gotd/td/telegram/uploader"
 	"github.com/gotd/td/tg"
+	"github.com/gotd/td/tgerr"
 	"golang.org/x/time/rate"
 )
 
@@ -268,18 +270,32 @@ func (t *Telegram) record(ctx context.Context, e tg.Entities, m tg.MessageClass)
 	t.events.Append(Event{ChatKind: ents.kind(nm.GetPeerID()), Message: msg})
 }
 
-// Login runs the interactive phone/code/2FA flow.
-func Login(ctx context.Context, cfg Config, ua auth.UserAuthenticator) (*tg.User, error) {
+// Login signs the session in, either by scanning a QR code with the
+// Telegram app (qr=true) or with phone number, login code, and 2FA password.
+func Login(ctx context.Context, cfg Config, ua auth.UserAuthenticator, qr bool, showQR func(url string)) (*tg.User, error) {
+	dispatcher := tg.NewUpdateDispatcher()
+	loggedIn := qrlogin.OnLoginToken(dispatcher)
 	client := telegram.NewClient(cfg.AppID, cfg.AppHash, telegram.Options{
 		SessionStorage: &session.FileStorage{Path: cfg.SessionPath()},
 		Device:         deviceConfig(),
+		UpdateHandler:  dispatcher,
 	})
 	var self *tg.User
 	err := client.Run(ctx, func(ctx context.Context) error {
-		if err := client.Auth().IfNecessary(ctx, auth.NewFlow(ua, auth.SendCodeOptions{})); err != nil {
+		status, err := client.Auth().Status(ctx)
+		if err != nil {
 			return err
 		}
-		var err error
+		if !status.Authorized {
+			if qr {
+				err = qrLogin(ctx, client, loggedIn, ua, showQR)
+			} else {
+				err = client.Auth().IfNecessary(ctx, auth.NewFlow(ua, auth.SendCodeOptions{}))
+			}
+			if err != nil {
+				return err
+			}
+		}
 		self, err = client.Self(ctx)
 		return err
 	})
@@ -287,4 +303,19 @@ func Login(ctx context.Context, cfg Config, ua auth.UserAuthenticator) (*tg.User
 		err = os.Chmod(cfg.SessionPath(), 0o600)
 	}
 	return self, err
+}
+
+func qrLogin(ctx context.Context, client *telegram.Client, loggedIn qrlogin.LoggedIn, ua auth.UserAuthenticator, show func(string)) error {
+	_, err := client.QR().Auth(ctx, loggedIn, func(_ context.Context, t qrlogin.Token) error {
+		show(t.URL()) // called again whenever the token expires (~30s)
+		return nil
+	})
+	if tgerr.Is(err, "SESSION_PASSWORD_NEEDED") {
+		pw, perr := ua.Password(ctx)
+		if perr != nil {
+			return perr
+		}
+		_, err = client.Auth().Password(ctx, pw)
+	}
+	return err
 }

@@ -5,6 +5,7 @@ go 1.27.4
 require (
 	github.com/gotd/contrib v0.25.0
 	github.com/gotd/td v0.163.0
+	github.com/mdp/qrterminal/v3 v3.2.1
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	go.etcd.io/bbolt v1.5.0
 	golang.org/x/sync v0.22.0

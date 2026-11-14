@@ -22,6 +22,7 @@ import (
 
 	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/tg"
+	"github.com/mdp/qrterminal/v3"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
@@ -159,6 +160,7 @@ func serve(log *slog.Logger) error {
 
 func login() error {
 	reset := flag.Bool("reset", false, "re-enter the API credentials")
+	usePhone := flag.Bool("phone", false, "log in with phone number and code instead of a QR code")
 	flag.Parse()
 	in := bufio.NewReader(os.Stdin)
 
@@ -198,7 +200,19 @@ func login() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	self, err := Login(ctx, cfg, termAuth{in: in})
+	if !*usePhone {
+		fmt.Println("On your phone: Telegram → Settings → Devices → Link Desktop Device, then scan this code.")
+		fmt.Println("(It refreshes every ~30s. Use `telex login --phone` for a login code instead.)")
+	}
+	self, err := Login(ctx, cfg, termAuth{in: in}, !*usePhone, func(url string) {
+		fmt.Println()
+		qrterminal.GenerateWithConfig(url, qrterminal.Config{
+			Level: qrterminal.L, Writer: os.Stdout, HalfBlocks: true,
+			BlackChar: qrterminal.BLACK_BLACK, WhiteChar: qrterminal.WHITE_WHITE,
+			BlackWhiteChar: qrterminal.BLACK_WHITE, WhiteBlackChar: qrterminal.WHITE_BLACK,
+			QuietZone: 2,
+		})
+	})
 	if err != nil {
 		return err
 	}
