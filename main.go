@@ -212,8 +212,31 @@ func (a termAuth) Phone(context.Context) (string, error) {
 	return prompt(a.in, "Phone number (international format, e.g. +15551234567): ")
 }
 func (a termAuth) Password(context.Context) (string, error) { return secret("2FA password: ") }
-func (a termAuth) Code(context.Context, *tg.AuthSentCode) (string, error) {
-	return prompt(a.in, "Login code (sent to your Telegram app): ")
+func (a termAuth) Code(_ context.Context, sent *tg.AuthSentCode) (string, error) {
+	fmt.Println(codeDelivery(sent.Type))
+	return prompt(a.in, "Login code: ")
+}
+
+// codeDelivery says where Telegram sent the login code.
+func codeDelivery(t tg.AuthSentCodeTypeClass) string {
+	switch t := t.(type) {
+	case *tg.AuthSentCodeTypeApp:
+		return "Code sent as a message from \"Telegram\" in your Telegram app on another device (not SMS)."
+	case *tg.AuthSentCodeTypeSMS:
+		return "Code sent by SMS."
+	case *tg.AuthSentCodeTypeCall:
+		return "You will receive a phone call that reads out the code."
+	case *tg.AuthSentCodeTypeFlashCall, *tg.AuthSentCodeTypeMissedCall:
+		return "Code is the last digits of the number in an incoming (missed) call."
+	case *tg.AuthSentCodeTypeEmailCode:
+		return fmt.Sprintf("Code sent to your login email (%s).", t.EmailPattern)
+	case *tg.AuthSentCodeTypeFragmentSMS:
+		return "Code sent via Fragment: " + t.URL
+	case *tg.AuthSentCodeTypeSetUpEmailRequired:
+		return "Telegram requires a login email to be set up first; do that in the Telegram app (Settings > Privacy and Security > Login Email)."
+	default:
+		return fmt.Sprintf("Code sent (%s).", t.TypeName())
+	}
 }
 func (a termAuth) AcceptTermsOfService(_ context.Context, tos tg.HelpTermsOfService) error {
 	return &auth.SignUpRequired{TermsOfService: tos}
