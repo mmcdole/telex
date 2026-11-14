@@ -18,7 +18,7 @@ processes use at once.
 
 | Variable | Meaning |
 |---|---|
-| `TG_APP_ID`, `TG_API_HASH` | Override the Keychain credentials |
+| `TG_APP_ID`, `TG_API_HASH` | Override the credentials saved by `telex login` |
 | `TELEX_HOME` | State dir (default `~/.local/share/telex`) |
 | `TELEX_ALLOWED_ROOTS` | Dirs `send_file` may read from |
 | `TELEX_DOWNLOAD_DIR` | Where `download_media` writes (default `$TELEX_HOME/downloads`) |

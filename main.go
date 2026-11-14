@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -175,10 +176,14 @@ func login() error {
 		if err != nil {
 			return err
 		}
-		if err := keychainSet("app_id", id); err != nil {
-			return err
+		appID, err := strconv.Atoi(id)
+		if err != nil {
+			return fmt.Errorf("api_id must be a number: %w", err)
 		}
-		if err := keychainSet("api_hash", hash); err != nil {
+		if len(hash) != 32 {
+			return fmt.Errorf("api_hash should be 32 characters, got %d", len(hash))
+		}
+		if err := saveCreds(cfg.CredsPath(), creds{AppID: appID, AppHash: hash}); err != nil {
 			return err
 		}
 		if cfg, err = LoadConfig(true); err != nil {

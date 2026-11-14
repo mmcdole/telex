@@ -1,17 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 )
-
-// keychainService is the macOS Keychain service that holds the API credentials.
-const keychainService = "telex"
 
 // Config is everything the server reads from the environment.
 type Config struct {
@@ -40,9 +37,10 @@ func (c Config) SessionPath() string { return filepath.Join(c.Home, "session.jso
 func (c Config) PeersDBPath() string { return filepath.Join(c.Home, "peers.db") }
 func (c Config) LockPath() string    { return filepath.Join(c.Home, "session.lock") }
 func (c Config) AuditPath() string   { return filepath.Join(c.Home, "audit.jsonl") }
+func (c Config) CredsPath() string   { return filepath.Join(c.Home, "credentials.json") }
 
 // LoadConfig reads TELEX_* settings. Credentials come from TG_APP_ID /
-// TG_API_HASH, falling back to the Keychain entries `telex login` stores.
+// TG_API_HASH, falling back to the credentials file `telex login` writes.
 func LoadConfig(requireCreds bool) (Config, error) {
 	home := os.Getenv("TELEX_HOME")
 	if home == "" {
@@ -75,14 +73,20 @@ func LoadConfig(requireCreds bool) (Config, error) {
 		return Config{}, err
 	}
 
-	idStr := firstNonEmpty(os.Getenv("TG_APP_ID"), keychainGet("app_id"))
-	cfg.AppHash = firstNonEmpty(os.Getenv("TG_API_HASH"), keychainGet("api_hash"))
-	if idStr != "" {
-		id, err := strconv.Atoi(strings.TrimSpace(idStr))
+	saved, err := loadCreds(cfg.CredsPath())
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.AppID, cfg.AppHash = saved.AppID, saved.AppHash
+	if v := os.Getenv("TG_APP_ID"); v != "" {
+		id, err := strconv.Atoi(strings.TrimSpace(v))
 		if err != nil {
-			return Config{}, fmt.Errorf("app id %q: %w", idStr, err)
+			return Config{}, fmt.Errorf("TG_APP_ID %q: %w", v, err)
 		}
 		cfg.AppID = id
+	}
+	if v := os.Getenv("TG_API_HASH"); v != "" {
+		cfg.AppHash = v
 	}
 	if requireCreds && (cfg.AppID == 0 || cfg.AppHash == "") {
 		return Config{}, errors.New("no Telegram API credentials: run `telex login` (or set TG_APP_ID and TG_API_HASH)")
@@ -110,19 +114,49 @@ func firstNonEmpty(vs ...string) string {
 	return ""
 }
 
-func keychainGet(account string) string {
-	out, err := exec.Command("security", "find-generic-password", "-s", keychainService, "-a", account, "-w").Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
+// creds is the credentials file: like the session next to it, it is
+// readable only by the owner.
+type creds struct {
+	AppID   int    `json:"app_id"`
+	AppHash string `json:"api_hash"`
 }
 
-func keychainSet(account, value string) error {
-	// -U updates an existing item instead of failing.
-	cmd := exec.Command("security", "add-generic-password", "-U", "-s", keychainService, "-a", account, "-w", value)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("keychain: %v: %s", err, out)
+func loadCreds(path string) (creds, error) {
+	var c creds
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return c, nil
 	}
-	return nil
+	if err != nil {
+		return c, err
+	}
+	if err := json.Unmarshal(b, &c); err != nil {
+		return c, fmt.Errorf("%s: %w", path, err)
+	}
+	return c, nil
+}
+
+// saveCreds writes atomically with 0600 permissions.
+func saveCreds(path string, c creds) error {
+	b, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".credentials-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(append(b, '\n')); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }
