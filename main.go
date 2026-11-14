@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -43,7 +44,8 @@ func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	cmd := "serve"
 	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-") {
-		cmd, os.Args = os.Args[1], append(os.Args[:1], os.Args[2:]...)
+		cmd = os.Args[1]
+		os.Args = slices.Delete(slices.Clone(os.Args), 1, 2)
 	}
 	var err error
 	switch cmd {
